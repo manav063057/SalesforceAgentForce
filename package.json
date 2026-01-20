@@ -8,6 +8,9 @@
     "dev": "node --watch server.js"
   },
   "dependencies": {
+    "@11ty/eleventy-img": "^6.0.4",
+    "@deepgram/sdk": "^4.11.3",
+    "axios": "^1.13.2",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "twilio": "^5.0.0",
