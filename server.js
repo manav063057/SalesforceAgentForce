@@ -162,18 +162,25 @@ wss.on("connection", async (ws) => {
  * Handle conversation with Salesforce Agent
  */
 async function handleAgentConversation(userMessage, sessionId, ws) {
+  let agentResponse;
+
   if (!sessionId) {
-    console.log("⚠️ No Salesforce session available");
-    return;
+    console.log("⚠️ No Salesforce session available - Using Mock Agent");
+    agentResponse = "I am a mock agent. Salesforce is currently offline, but I received your message: " + userMessage;
+  } else {
+    try {
+      // Send message to Salesforce Agent
+      agentResponse = await salesforceService.sendMessage(sessionId, userMessage);
+    } catch (error) {
+      console.error("❌ Error in agent conversation:", error);
+      agentResponse = "I'm having trouble connecting to Salesforce right now.";
+    }
   }
 
-  try {
-    // Send message to Salesforce Agent
-    const agentResponse = await salesforceService.sendMessage(sessionId, userMessage);
+  // Log the response (Mock or Real)
+  console.log(`🤖 Agent Response: ${agentResponse}`);
 
-    // TODO: Convert agent response to speech using ElevenLabs/Google TTS
-    // For now, just log it
-    console.log(`🤖 Agent Response: ${agentResponse}`);
+  // TODO: Convert agent response to speech using ElevenLabs/Google TTS
 
     // In production, you would:
     // 1. Call ElevenLabs API to convert agentResponse to audio
@@ -185,9 +192,6 @@ async function handleAgentConversation(userMessage, sessionId, ws) {
     //   media: { payload: audioBuffer.toString('base64') }
     // }));
 
-  } catch (error) {
-    console.error("❌ Error in agent conversation:", error);
-  }
 }
 
 server.listen(PORT, () => {

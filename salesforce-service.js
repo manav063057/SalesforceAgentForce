@@ -46,15 +46,20 @@ class SalesforceService {
 
   /**
    * Create a new Agent session
-   * @returns {string} sessionId
+   * @returns {object} {sessionId, sessionKey}
    */
   async createSession() {
     const token = await this.getAccessToken();
+    const sessionKey = this.generateUUID();
 
     try {
       const response = await axios.post(
-        `${this.instanceUrl}/services/data/v60.0/einstein/ai-agents/${this.agentId}/sessions`,
-        {},
+        `${this.instanceUrl}/services/data/v65.0/connect/agent-sessions`,
+        {
+          agentId: this.agentId,
+          sessionKey: sessionKey,
+          bypassUser: true, // Use agent-assigned user instead of token user
+        },
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -63,12 +68,24 @@ class SalesforceService {
         }
       );
 
-      console.log("✅ Agent session created:", response.data.sessionId);
-      return response.data.sessionId;
+      const sessionId = response.data.id;
+      console.log("✅ Agent session created:", sessionId);
+      return { sessionId, sessionKey };
     } catch (error) {
       console.error("❌ Error creating session:", error.response?.data || error.message);
       throw error;
     }
+  }
+
+  /**
+   * Generate a random UUID for session key
+   */
+  generateUUID() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
   }
 
   /**
@@ -82,9 +99,11 @@ class SalesforceService {
 
     try {
       const response = await axios.post(
-        `${this.instanceUrl}/services/data/v60.0/einstein/ai-agents/${this.agentId}/sessions/${sessionId}/messages`,
+        `${this.instanceUrl}/services/data/v65.0/connect/agent-sessions/${sessionId}/messages`,
         {
-          message: userMessage,
+          message: {
+            text: userMessage,
+          },
         },
         {
           headers: {
@@ -94,7 +113,10 @@ class SalesforceService {
         }
       );
 
-      const agentReply = response.data.messages?.[0]?.text || "I didn't understand that.";
+      // Parse response - API returns messages array
+      const messages = response.data.messages || [];
+      const agentReply = messages.length > 0 ? messages[messages.length - 1].text : "I didn't understand that.";
+      
       console.log(`🤖 Agent: ${agentReply}`);
       return agentReply;
     } catch (error) {
@@ -112,7 +134,7 @@ class SalesforceService {
 
     try {
       await axios.delete(
-        `${this.instanceUrl}/services/data/v60.0/einstein/ai-agents/${this.agentId}/sessions/${sessionId}`,
+        `${this.instanceUrl}/services/data/v65.0/connect/agent-sessions/${sessionId}`,
         {
           headers: {
             Authorization: `Bearer ${token}`,

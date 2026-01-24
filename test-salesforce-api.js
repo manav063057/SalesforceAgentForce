@@ -17,7 +17,8 @@ async function testSalesforceConnection() {
 
     // Step 2: Create Session
     console.log("\n2️⃣ Creating Agent session...");
-    const sessionId = await salesforceService.createSession();
+    const { sessionId, sessionKey } = await salesforceService.createSession();
+    console.log(`   Session Key: ${sessionKey}`);
 
     // Step 3: Send Test Message
     console.log("\n3️⃣ Sending test message...");
