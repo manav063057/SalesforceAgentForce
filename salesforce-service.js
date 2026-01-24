@@ -53,26 +53,47 @@ class SalesforceService {
     const sessionKey = this.generateUUID();
 
     try {
+      // Use the Einstein AI Agent API endpoint from user docs
+      // Note: Using instanceUrl instead of api.salesforce.com to avoid domain mismatch
+      const url = `${this.instanceUrl}/services/data/v60.0/einstein/ai-agent/v1/agents/${this.agentId}/sessions`;
+      
       const response = await axios.post(
-        `${this.instanceUrl}/services/data/v65.0/connect/agent-sessions`,
+        url,
         {
-          agentId: this.agentId,
-          sessionKey: sessionKey,
-          bypassUser: true, // Use agent-assigned user instead of token user
+          externalSessionKey: sessionKey,
+          instanceConfig: {
+            endpoint: this.instanceUrl
+          },
+          streamingCapabilities: {
+            chunkTypes: ["Text"]
+          },
+          bypassUser: true
         },
         {
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
+            "x-client-feature-id": "ai-agent-api" // Often required for this API
           },
         }
       );
 
-      const sessionId = response.data.id;
+      // The response structure might be different, logging keys to be sure
+      console.log("✅ API Response Keys:", Object.keys(response.data));
+      
+      const sessionId = response.data.sessionId || response.data.id;
       console.log("✅ Agent session created:", sessionId);
+      
+      // Initialize sequence ID for this session
+      this.sessionSequences.set(sessionId, 1);
+      
       return { sessionId, sessionKey };
     } catch (error) {
       console.error("❌ Error creating session:", error.response?.data || error.message);
+      // Fallback log for URL verification
+      if (error.response?.status === 404) {
+          console.error("URL Attempted:", `${this.instanceUrl}/services/data/v60.0/einstein/ai-agent/v1/agents/${this.agentId}/sessions`);
+      }
       throw error;
     }
   }
@@ -98,17 +119,28 @@ class SalesforceService {
     const token = await this.getAccessToken();
 
     try {
+      // Get and increment sequence ID
+      const sequenceId = this.sessionSequences.get(sessionId) || 1;
+      this.sessionSequences.set(sessionId, sequenceId + 1);
+
+      // Einstein AI Agent API message endpoint (Per docs: /v1/sessions/{SESSION_ID}/messages)
+      // Note: NO /agents/{agentId} in path
+      const url = `${this.instanceUrl}/services/data/v60.0/einstein/ai-agent/v1/sessions/${sessionId}/messages`;
+
       const response = await axios.post(
-        `${this.instanceUrl}/services/data/v65.0/connect/agent-sessions/${sessionId}/messages`,
+        url,
         {
           message: {
-            text: userMessage,
-          },
+            sequenceId: sequenceId,
+            type: "Text",
+            text: userMessage
+          }
         },
         {
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
+            "x-client-feature-id": "ai-agent-api"
           },
         }
       );
@@ -121,6 +153,10 @@ class SalesforceService {
       return agentReply;
     } catch (error) {
       console.error("❌ Error sending message:", error.response?.data || error.message);
+      // Fallback: If 404, maybe session expired or URL wrong
+       if (error.response?.status === 404) {
+          console.error("URL Attempted:", `${this.instanceUrl}/services/data/v60.0/einstein/ai-agent/v1/sessions/${sessionId}/messages`);
+      }
       return "Sorry, I'm having trouble connecting right now.";
     }
   }
@@ -133,16 +169,19 @@ class SalesforceService {
     const token = await this.getAccessToken();
 
     try {
+      // Endpoint: /v1/sessions/{SESSION_ID} (NO Agent ID)
       await axios.delete(
-        `${this.instanceUrl}/services/data/v65.0/connect/agent-sessions/${sessionId}`,
+        `${this.instanceUrl}/services/data/v60.0/einstein/ai-agent/v1/sessions/${sessionId}`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
+            "x-session-end-reason": "UserRequest"
           },
         }
       );
 
       console.log("✅ Session ended:", sessionId);
+      this.sessionSequences.delete(sessionId);
     } catch (error) {
       console.error("❌ Error ending session:", error.response?.data || error.message);
     }
