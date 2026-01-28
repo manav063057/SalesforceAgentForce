@@ -21,6 +21,22 @@ const twilioClient = new Twilio(
 // Server Setup
 const server = http.createServer(app);
 
+// Simple log buffer for diagnostics
+const logs = [];
+const log = (msg) => {
+  const entry = `[${new Date().toISOString()}] ${msg}`;
+  console.log(entry);
+  logs.push(entry);
+  if (logs.length > 200) logs.shift();
+};
+
+/**
+ * Diagnostic Endpoint: View recent logs
+ */
+app.get("/api/logs", (req, res) => {
+  res.type("text/plain").send(logs.join("\n"));
+});
+
 /**
  * Endpoint 1: Initiate Call (Triggered by Salesforce Batch)
  */
@@ -49,7 +65,7 @@ app.all("/twiml-stream", (req, res) => {
   const orderNumber = req.body.order || req.query.order || "your order";
   const host = req.headers.host;
   
-  console.log(`📨 TwiML requested (${req.method}). Host: ${host}, Order: ${orderNumber}`);
+  log(`📨 TwiML requested (${req.method}). Host: ${host}, Order: ${orderNumber}`);
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -71,7 +87,7 @@ app.all("/twiml-stream", (req, res) => {
 const wss = new WebSocketServer({ server, path: "/stream" });
 
 wss.on("connection", async (ws) => {
-  console.log("📞 New Client Connected to WebSocket");
+  log("📞 New Client Connected to WebSocket");
 
   let deepgramLive;
   let salesforceSession;
@@ -89,18 +105,22 @@ wss.on("connection", async (ws) => {
     });
 
     deepgramLive.on(LiveTranscriptionEvents.Open, () => {
-      console.log("🟢 Deepgram STT connection opened");
+      log("🟢 Deepgram STT connection opened");
     });
 
     deepgramLive.on(LiveTranscriptionEvents.Transcript, async (data) => {
       const transcript = data.channel.alternatives[0].transcript;
       if (transcript && data.is_final) {
-        console.log(`🎤 [STT] Customer: "${transcript}"`);
+        log(`🎤 [STT] Customer: "${transcript}"`);
         
-        // Wait for session if it's still being created
+        // Ensure session is ready
         if (process.env.SALESFORCE_AGENT_ID && !salesforceSession) {
-           console.log("⏳ Waiting for Salesforce session to initialize...");
-           // Simple retry/wait logic could go here, but for now we log it
+           log("⏳ Salesforce session not ready, waiting...");
+           let retries = 0;
+           while (!salesforceSession && retries < 5) {
+             await new Promise(r => setTimeout(r, 1000));
+             retries++;
+           }
         }
 
         // Send to Agent and get response
@@ -109,19 +129,19 @@ wss.on("connection", async (ws) => {
     });
 
     deepgramLive.on(LiveTranscriptionEvents.Error, (err) => {
-      console.error("🔴 Deepgram Error:", err);
+      log(`🔴 Deepgram Error: ${err.message}`);
     });
   }
 
   // Create Salesforce Agent session if configured
   if (process.env.SALESFORCE_AGENT_ID) {
     try {
-      console.log("🔄 Initializing Salesforce Agent session...");
+      log("🔄 Initializing Salesforce Agent session...");
       const sessionData = await salesforceService.createSession();
       salesforceSession = sessionData;
-      console.log(`✅ Salesforce session ready: ${salesforceSession.sessionId}`);
+      log(`✅ Salesforce session ready: ${salesforceSession.sessionId}`);
     } catch (error) {
-      console.error("❌ Could not create Salesforce session:", error.message);
+      log(`❌ Could not create Salesforce session: ${error.message}`);
     }
   }
 
@@ -131,12 +151,12 @@ wss.on("connection", async (ws) => {
 
       switch (msg.event) {
         case "connected":
-          console.log("✅ Twilio WebSocket Connected");
+          log("✅ Twilio WebSocket Connected");
           break;
 
         case "start":
           ws.streamSid = msg.start.streamSid; // Save for TTS streaming
-          console.log(`🎙️ Stream Started. ID: ${ws.streamSid}`);
+          log(`🎙️ Stream Started. ID: ${ws.streamSid}`);
           break;
 
         case "media":
@@ -148,18 +168,18 @@ wss.on("connection", async (ws) => {
           break;
 
         case "stop":
-          console.log("🛑 Stream Stopped");
+          log("🛑 Stream Stopped");
           if (deepgramLive) deepgramLive.finish();
           if (salesforceSession) salesforceService.endSession(salesforceSession.sessionId);
           break;
       }
     } catch (e) {
-      console.error("❌ Error parsing WebSocket message:", e.message);
+      log(`❌ Error parsing WebSocket message: ${e.message}`);
     }
   });
 
   ws.on("close", () => {
-    console.log("📴 WebSocket connection closed");
+    log("📴 WebSocket connection closed");
     if (deepgramLive) {
       deepgramLive.finish();
     }
@@ -175,27 +195,34 @@ wss.on("connection", async (ws) => {
 async function handleAgentConversation(userMessage, sessionId, ws) {
   let agentResponse;
 
-  console.log(`🤖 [Agent] Processing message: "${userMessage}"...`);
+  log(`🤖 [Agent] Processing message: "${userMessage}"...`);
 
   if (!sessionId) {
-    console.log("⚠️ No Salesforce session - Falling back to Mock Agent");
-    agentResponse = "I am a mock agent. Salesforce connectivity is being established, but I heard you say: " + userMessage;
+    log("⚠️ No Salesforce session - Falling back to Mock Agent");
+    agentResponse = "I am a mock agent. Salesforce is still connecting, but I heard: " + userMessage;
   } else {
     try {
       // Send message to Salesforce Agent
-      agentResponse = await salesforceService.sendMessage(sessionId, userMessage);
+      const response = await salesforceService.sendMessage(sessionId, userMessage);
+      
+      // Handle multiple message parts if present
+      if (Array.isArray(response)) {
+        agentResponse = response.join(" ");
+      } else {
+        agentResponse = response;
+      }
+      
     } catch (error) {
-      console.error("❌ Error in agent conversation:", error);
+      log(`❌ Error in agent conversation: ${error.message}`);
       agentResponse = "I'm having trouble connecting to Salesforce right now.";
     }
   }
 
-  // Log the response (Mock or Real)
-  console.log(`🤖 [Agent] Response: ${agentResponse}`);
+  log(`🤖 [Agent] Response: ${agentResponse}`);
 
   if (agentResponse && ws.streamSid) {
     try {
-      console.log(`🔊 [TTS] Starting voice generation for: "${agentResponse.substring(0, 20)}..."`);
+      log(`🔊 [TTS] Generating voice for: "${agentResponse.substring(0, 30)}..."`);
       
       // Convert text to speech using Deepgram Aura
       const ttsResponse = await deepgram.speak.request(
@@ -223,18 +250,18 @@ async function handleAgentConversation(userMessage, sessionId, ws) {
           }));
           chunkCount++;
         }
-        console.log(`✅ [TTS] Sent ${chunkCount} audio chunks to customer`);
+        log(`✅ [TTS] Sent ${chunkCount} audio chunks to customer`);
       }
     } catch (error) {
-      console.error("❌ Error in Deepgram TTS:", error.message);
+      log(`❌ Error in Deepgram TTS: ${error.message}`);
     }
   } else {
-    if (!ws.streamSid) console.log("⚠️ Cannot play audio: Missing streamSid");
+    if (!ws.streamSid) log("⚠️ Cannot play audio: Missing streamSid");
   }
 }
 
 server.listen(PORT, () => {
-  console.log(`🚀 Server listening on port ${PORT}`);
-  console.log(`📋 Deepgram: ${process.env.DEEPGRAM_API_KEY ? "✅ Configured" : "❌ Missing"}`);
-  console.log(`🤖 Salesforce Agent: ${process.env.SALESFORCE_AGENT_ID ? "✅ Configured" : "❌ Missing"}`);
+  log(`🚀 Server listening on port ${PORT}`);
+  log(`📋 Deepgram API: ${process.env.DEEPGRAM_API_KEY ? "✅ Configured" : "❌ Missing"}`);
+  log(`🤖 Salesforce Agent: ${process.env.SALESFORCE_AGENT_ID ? "✅ Configured" : "❌ Missing"}`);
 });
