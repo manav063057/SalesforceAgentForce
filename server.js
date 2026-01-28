@@ -44,16 +44,16 @@ app.post("/api/initiate-call", async (req, res) => {
   }
 });
 
-app.get("/twiml-stream", (req, res) => {
-  // Extract order number from query parameter
-  const orderNumber = req.query.order || "your order";
+app.all("/twiml-stream", (req, res) => {
+  // Extract order number from body (POST) or query (GET)
+  const orderNumber = req.body.order || req.query.order || "your order";
   const host = req.headers.host;
   
-  console.log(`📨 TwiML requested. Host: ${host}, Order: ${orderNumber}`);
+  console.log(`📨 TwiML requested (${req.method}). Host: ${host}, Order: ${orderNumber}`);
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="Polly.Joanna">
+    <Say voice="alice">
         Hello, this is a reminder about your order ${orderNumber} is expected to deliver today. Let me know if you have any query.
     </Say>
     <Connect>
