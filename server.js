@@ -6,6 +6,8 @@ const http = require("http");
 const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
 const salesforceService = require("./salesforce-service");
 
+const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
+
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -18,30 +20,27 @@ const twilioClient = new Twilio(
 
 // Server Setup
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
 
 /**
- * Endpoint 1: Initiate Call (Called by Salesforce)
+ * Endpoint 1: Initiate Call (Triggered by Salesforce Batch)
  */
 app.post("/api/initiate-call", async (req, res) => {
+  const { Phone, OrderNumber, DeliveryDate, OrderId, Address } = req.body;
+
   try {
-    const { Phone, OrderId, OrderNumber, DeliveryDate, Address } = req.body;
+    console.log(`📞 Initiating call to: ${Phone} for Order: ${OrderNumber}`);
 
-    console.log(`Initiating call to ${Phone} for Order ${OrderNumber}`);
-
-    if (!Phone) return res.status(400).json({ error: "Phone number missing" });
-
-    // Initiate Call via Twilio
     const call = await twilioClient.calls.create({
       to: Phone,
       from: process.env.TWILIO_PHONE_NUMBER,
-      url: `https://${req.headers.host}/twiml-stream?name=Customer&order=${OrderNumber}&date=${DeliveryDate}&address=${encodeURIComponent(Address)}`,
+      url: `https://${req.headers.host}/twiml-stream?order=${OrderNumber}`,
     });
 
+    console.log(`✅ Call initiated! SID: ${call.sid}`);
     res.json({ success: true, callSid: call.sid });
   } catch (error) {
-    console.error("Error initiating call:", error);
-    res.status(500).json({ error: error.message });
+    console.error("❌ Error initiating call:", error.message);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -69,53 +68,49 @@ app.get("/twiml-stream", (req, res) => {
 /**
  * WebSocket: Handle Audio Stream with AI Integration
  */
+const wss = new WebSocketServer({ server, path: "/stream" });
+
 wss.on("connection", async (ws) => {
-  console.log("📞 New Client Connected to Media Stream");
+  console.log("📞 New Client Connected to WebSocket");
 
-  let deepgramLive = null;
-  let salesforceSession = null;
-  let transcriptBuffer = "";
+  let deepgramLive;
+  let salesforceSession;
 
-  // Initialize Deepgram if API key is available
+  // Initialize Deepgram for STT (Speech-to-Text)
   if (process.env.DEEPGRAM_API_KEY) {
-    const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
     deepgramLive = deepgram.listen.live({
       model: "nova-2",
       language: "en-US",
       smart_format: true,
       encoding: "mulaw",
       sample_rate: 8000,
+      interim_results: false,
+      no_delay: true,
     });
 
-    // Handle Deepgram transcription events
+    deepgramLive.on(LiveTranscriptionEvents.Open, () => {
+      console.log("🟢 Deepgram STT connection opened");
+    });
+
     deepgramLive.on(LiveTranscriptionEvents.Transcript, async (data) => {
       const transcript = data.channel.alternatives[0].transcript;
-
-      if (transcript && transcript.trim().length > 0) {
+      if (transcript && data.is_final) {
         console.log(`🎤 Customer said: ${transcript}`);
-        transcriptBuffer += transcript + " ";
-
-        // If customer paused (is_final), send to Agent
-        if (data.is_final) {
-          const userMessage = transcriptBuffer.trim();
-          transcriptBuffer = "";
-
-          if (userMessage) {
-            await handleAgentConversation(userMessage, salesforceSession, ws);
-          }
-        }
+        // Send to Agent and get response
+        await handleAgentConversation(transcript, salesforceSession?.sessionId, ws);
       }
     });
 
-    deepgramLive.on(LiveTranscriptionEvents.Error, (error) => {
-      console.error("❌ Deepgram error:", error);
+    deepgramLive.on(LiveTranscriptionEvents.Error, (err) => {
+      console.error("🔴 Deepgram Error:", err);
     });
   }
 
   // Create Salesforce Agent session if configured
   if (process.env.SALESFORCE_AGENT_ID) {
     try {
-      salesforceSession = await salesforceService.createSession();
+      const sessionData = await salesforceService.createSession();
+      salesforceSession = sessionData;
     } catch (error) {
       console.error("❌ Could not create Salesforce session:", error.message);
     }
@@ -130,7 +125,8 @@ wss.on("connection", async (ws) => {
         break;
 
       case "start":
-        console.log("🎙️ Stream Started", msg.start);
+        ws.streamSid = msg.start.streamSid; // Save for TTS streaming
+        console.log("🎙️ Stream Started", msg.start.streamSid);
         break;
 
       case "media":
@@ -143,12 +139,8 @@ wss.on("connection", async (ws) => {
 
       case "stop":
         console.log("🛑 Stream Stopped");
-        if (deepgramLive) {
-          deepgramLive.finish();
-        }
-        if (salesforceSession) {
-          salesforceService.endSession(salesforceSession);
-        }
+        if (deepgramLive) deepgramLive.finish();
+        if (salesforceSession) salesforceService.endSession(salesforceSession.sessionId);
         break;
     }
   });
@@ -159,13 +151,13 @@ wss.on("connection", async (ws) => {
       deepgramLive.finish();
     }
     if (salesforceSession) {
-      salesforceService.endSession(salesforceSession);
+      salesforceService.endSession(salesforceSession.sessionId);
     }
   });
 });
 
 /**
- * Handle conversation with Salesforce Agent
+ * Handle conversation with Salesforce Agent and speak response back
  */
 async function handleAgentConversation(userMessage, sessionId, ws) {
   let agentResponse;
@@ -186,18 +178,38 @@ async function handleAgentConversation(userMessage, sessionId, ws) {
   // Log the response (Mock or Real)
   console.log(`🤖 Agent Response: ${agentResponse}`);
 
-  // TODO: Convert agent response to speech using ElevenLabs/Google TTS
+  if (agentResponse && ws.streamSid) {
+    try {
+      // Convert text to speech using Deepgram Aura
+      const ttsResponse = await deepgram.speak.request(
+        { text: agentResponse },
+        {
+          model: "aura-asteria-en", // Natural female voice
+          encoding: "mulaw",         // Twilio format
+          sample_rate: 8000,         // Twilio requirement
+          container: "none"          // Raw audio stream
+        }
+      );
 
-    // In production, you would:
-    // 1. Call ElevenLabs API to convert agentResponse to audio
-    // 2. Stream the audio back to Twilio via WebSocket
-    // Example (pseudo-code):
-    // const audioBuffer = await textToSpeech(agentResponse);
-    // ws.send(JSON.stringify({
-    //   event: 'media',
-    //   media: { payload: audioBuffer.toString('base64') }
-    // }));
-
+      const audioStream = await ttsResponse.getStream();
+      
+      // Stream audio back to Twilio
+      if (audioStream) {
+        for await (const chunk of audioStream) {
+          ws.send(JSON.stringify({
+            event: "media",
+            streamSid: ws.streamSid,
+            media: {
+              payload: chunk.toString("base64")
+            }
+          }));
+        }
+        console.log("🔊 Sent voice response back to customer");
+      }
+    } catch (error) {
+      console.error("❌ Error in Deepgram TTS:", error.message);
+    }
+  }
 }
 
 server.listen(PORT, () => {
