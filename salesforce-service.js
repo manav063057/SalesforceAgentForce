@@ -8,6 +8,7 @@ class SalesforceService {
     this.agentId = process.env.SALESFORCE_AGENT_ID;
     this.accessToken = null;
     this.tokenExpiry = null;
+    this.sessionSequences = new Map(); // Track sequence IDs for sessions
   }
 
   /**
@@ -53,9 +54,8 @@ class SalesforceService {
     const sessionKey = this.generateUUID();
 
     try {
-      // Use the Einstein AI Agent API endpoint from user docs
-      // Note: Using instanceUrl instead of api.salesforce.com to avoid domain mismatch
-      const url = `${this.instanceUrl}/services/data/v60.0/einstein/ai-agent/v1/agents/${this.agentId}/sessions`;
+      // Use the global Einstein AI Agent API endpoint (matches Postman)
+      const url = `https://api.salesforce.com/einstein/ai-agent/v1/agents/${this.agentId}/sessions`;
       
       const response = await axios.post(
         url,
@@ -123,9 +123,8 @@ class SalesforceService {
       const sequenceId = this.sessionSequences.get(sessionId) || 1;
       this.sessionSequences.set(sessionId, sequenceId + 1);
 
-      // Einstein AI Agent API message endpoint (Per docs: /v1/sessions/{SESSION_ID}/messages)
-      // Note: NO /agents/{agentId} in path
-      const url = `${this.instanceUrl}/services/data/v60.0/einstein/ai-agent/v1/sessions/${sessionId}/messages`;
+      // Global Einstein AI Agent API endpoint
+      const url = `https://api.salesforce.com/einstein/ai-agent/v1/sessions/${sessionId}/messages`;
 
       const response = await axios.post(
         url,
@@ -169,9 +168,9 @@ class SalesforceService {
     const token = await this.getAccessToken();
 
     try {
-      // Endpoint: /v1/sessions/{SESSION_ID} (NO Agent ID)
+      // Global Einstein AI Agent API endpoint
       await axios.delete(
-        `${this.instanceUrl}/services/data/v60.0/einstein/ai-agent/v1/sessions/${sessionId}`,
+        `https://api.salesforce.com/einstein/ai-agent/v1/sessions/${sessionId}`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
