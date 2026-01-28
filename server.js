@@ -44,23 +44,23 @@ app.post("/api/initiate-call", async (req, res) => {
   }
 });
 
-/**
- * Endpoint 2: TwiML Webhook (Called by Twilio when user answers)
- */
 app.get("/twiml-stream", (req, res) => {
   // Extract order number from query parameter
   const orderNumber = req.query.order || "your order";
+  const host = req.headers.host;
   
-  const twiml = `
-    <Response>
-        <Say voice="Polly.Joanna">
-            Hello, this is a reminder about your order ${orderNumber} is expected to deliver today. Let me know if you have any query.
-        </Say>
-        <Connect>
-            <Stream url="wss://${req.headers.host}/stream" />
-        </Connect>
-    </Response>
-  `;
+  console.log(`📨 TwiML requested. Host: ${host}, Order: ${orderNumber}`);
+
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="Polly.Joanna">
+        Hello, this is a reminder about your order ${orderNumber} is expected to deliver today. Let me know if you have any query.
+    </Say>
+    <Connect>
+        <Stream url="wss://${host}/stream" />
+    </Connect>
+</Response>`;
+
   res.type("text/xml");
   res.send(twiml);
 });
