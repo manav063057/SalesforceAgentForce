@@ -222,25 +222,26 @@ async function handleAgentConversation(userMessage, sessionId, ws) {
 
   if (agentResponse && ws.streamSid) {
     try {
-      log(`🔊 [TTS] Generating voice for: "${agentResponse.substring(0, 30)}..."`);
+      log(`🔊 [TTS] Starting voice generation for: "${agentResponse.substring(0, 30)}..."`);
       
       // Convert text to speech using Deepgram Aura
       const ttsResponse = await deepgram.speak.request(
         { text: agentResponse },
         {
-          model: "aura-asteria-en", // Natural female voice
-          encoding: "mulaw",         // Twilio format
-          sample_rate: 8000,         // Twilio requirement
-          container: "none"          // Raw audio stream
+          model: "aura-asteria-en",
+          encoding: "mulaw",
+          sample_rate: 8000,
+          container: "none"
         }
       );
 
       const audioStream = await ttsResponse.getStream();
       
-      // Stream audio back to Twilio
       if (audioStream) {
         let chunkCount = 0;
+        let totalBytes = 0;
         for await (const chunk of audioStream) {
+          totalBytes += chunk.length;
           ws.send(JSON.stringify({
             event: "media",
             streamSid: ws.streamSid,
@@ -250,13 +251,14 @@ async function handleAgentConversation(userMessage, sessionId, ws) {
           }));
           chunkCount++;
         }
-        log(`✅ [TTS] Sent ${chunkCount} audio chunks to customer`);
+        log(`✅ [TTS] Sent ${chunkCount} audio chunks (${totalBytes} bytes) to customer`);
       }
     } catch (error) {
       log(`❌ Error in Deepgram TTS: ${error.message}`);
     }
   } else {
     if (!ws.streamSid) log("⚠️ Cannot play audio: Missing streamSid");
+    if (!agentResponse) log("⚠️ Cannot play audio: Empty agentResponse");
   }
 }
 
