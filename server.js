@@ -245,18 +245,29 @@ async function handleAgentConversation(userMessage, sessionId, ws) {
       log("🟢 Deepgram TTS Stream obtained. sending chunks...");
 
       if (audioStream) {
+        log("🟢 Deepgram TTS Stream obtained. sending chunks with pacing...");
         let chunkCount = 0;
         let totalBytes = 0;
+        
         for await (const chunk of audioStream) {
           totalBytes += chunk.length;
+          
+          // Twilio expects raw Mu-law. If Deepgram sends a WAV header (44 bytes), skip it.
+          const payload = chunkCount === 0 && chunk.length > 44 && chunk.slice(0, 4) === Buffer.from("RIFF") 
+            ? chunk.slice(44).toString("base64") 
+            : chunk.toString("base64");
+
           ws.send(JSON.stringify({
             event: "media",
             streamSid: ws.streamSid,
             media: {
-              payload: chunk.toString("base64")
+              payload: payload
             }
           }));
+          
           chunkCount++;
+          // Pacing: 20ms delay per chunk to match real-time playback (8000Hz Mulaw)
+          await new Promise(r => setTimeout(r, 20));
         }
         log(`✅ [TTS] Sent ${chunkCount} audio chunks (${totalBytes} bytes) to customer`);
       } else {
