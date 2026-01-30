@@ -2,10 +2,10 @@ const axios = require("axios");
 
 class SalesforceService {
   constructor() {
-    this.clientId = process.env.SALESFORCE_CLIENT_ID;
-    this.clientSecret = process.env.SALESFORCE_CLIENT_SECRET;
-    this.instanceUrl = process.env.SALESFORCE_INSTANCE_URL;
-    this.agentId = process.env.SALESFORCE_AGENT_ID;
+    this.clientId = process.env.SALESFORCE_CLIENT_ID ? process.env.SALESFORCE_CLIENT_ID.trim() : "";
+    this.clientSecret = process.env.SALESFORCE_CLIENT_SECRET ? process.env.SALESFORCE_CLIENT_SECRET.trim() : "";
+    this.instanceUrl = process.env.SALESFORCE_INSTANCE_URL ? process.env.SALESFORCE_INSTANCE_URL.trim() : "";
+    this.agentId = process.env.SALESFORCE_AGENT_ID ? process.env.SALESFORCE_AGENT_ID.trim() : "";
     this.accessToken = null;
     this.tokenExpiry = null;
     this.sessionSequences = new Map(); // Track sequence IDs for sessions
@@ -57,6 +57,12 @@ class SalesforceService {
       // Use the global Einstein AI Agent API endpoint (matches Postman)
       const url = `https://api.salesforce.com/einstein/ai-agent/v1/agents/${this.agentId}/sessions`;
       
+      console.log("🔍 [DEBUG] Creating Session with:");
+      console.log("   - URL:", url);
+      console.log("   - Agent ID:", this.agentId);
+      console.log("   - Instance URL:", this.instanceUrl);
+      console.log("   - Token (first 20 chars):", token.substring(0, 20) + "...");
+
       const response = await axios.post(
         url,
         {
