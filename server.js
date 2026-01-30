@@ -6,7 +6,8 @@ const http = require("http");
 const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
 const salesforceService = require("./salesforce-service");
 
-const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
+const deepgramApiKey = process.env.DEEPGRAM_API_KEY ? process.env.DEEPGRAM_API_KEY.trim() : "";
+const deepgram = createClient(deepgramApiKey);
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
@@ -14,8 +15,8 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const twilioClient = new Twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN,
+  process.env.TWILIO_ACCOUNT_SID ? process.env.TWILIO_ACCOUNT_SID.trim() : "",
+  process.env.TWILIO_AUTH_TOKEN ? process.env.TWILIO_AUTH_TOKEN.trim() : "",
 );
 
 // Server Setup
@@ -221,11 +222,15 @@ async function handleAgentConversation(userMessage, sessionId, ws) {
 
   log(`🤖 [Agent] Response: ${agentResponse}`);
 
-  if (agentResponse && ws.streamSid) {
+  if (agentResponse) {
+    if (!ws.streamSid) {
+        log("❌ CRITICAL: Cannot play audio - Twilio StreamSid is missing. Audio stream never started.");
+        return;
+    }
+
     try {
       log(`🔊 [TTS] Starting voice generation for: "${agentResponse.substring(0, 30)}..."`);
       
-      // Convert text to speech using Deepgram Aura
       const ttsResponse = await deepgram.speak.request(
         { text: agentResponse },
         {
@@ -237,7 +242,8 @@ async function handleAgentConversation(userMessage, sessionId, ws) {
       );
 
       const audioStream = await ttsResponse.getStream();
-      
+      log("🟢 Deepgram TTS Stream obtained. sending chunks...");
+
       if (audioStream) {
         let chunkCount = 0;
         let totalBytes = 0;
@@ -253,13 +259,14 @@ async function handleAgentConversation(userMessage, sessionId, ws) {
           chunkCount++;
         }
         log(`✅ [TTS] Sent ${chunkCount} audio chunks (${totalBytes} bytes) to customer`);
+      } else {
+        log("❌ Deepgram returned empty audio stream");
       }
     } catch (error) {
-      log(`❌ Error in Deepgram TTS: ${error.message}`);
+      log(`❌ Error in Deepgram TTS: ${error.message} (Key: ${process.env.DEEPGRAM_API_KEY ? 'Present' : 'Missing'})`);
     }
   } else {
-    if (!ws.streamSid) log("⚠️ Cannot play audio: Missing streamSid");
-    if (!agentResponse) log("⚠️ Cannot play audio: Empty agentResponse");
+    log("⚠️ Cannot play audio: Empty agentResponse");
   }
 }
 
