@@ -159,9 +159,28 @@ class SalesforceService {
         }
       );
 
+      // Debugging: Log full response
+      if (global.serverLog) {
+          global.serverLog(`🤖 [DEBUG] Raw Salesforce Response: ${JSON.stringify(response.data)}`);
+      } else {
+          console.log(`🤖 [DEBUG] Raw Salesforce Response: ${JSON.stringify(response.data)}`);
+      }
+
       // Parse response - API returns messages array
       const messages = response.data.messages || [];
-      const agentReply = messages.length > 0 ? messages[messages.length - 1].text : "I didn't understand that.";
+      
+      // Filter for text messages and join them (handles multi-part responses)
+      const textMessages = messages.filter(m => m.type === 'Text' && m.text);
+      
+      let agentReply = "";
+      if (textMessages.length > 0) {
+          agentReply = textMessages.map(m => m.text).join(" ");
+      } else {
+          // Fallback: Check if there's any message content in other fields or just use the last message text
+          const anyContent = messages.map(m => m.text || m.message || m.content).filter(t => t).join(" ");
+           if (anyContent) agentReply = anyContent;
+           else agentReply = "I didn't understand that.";
+      }
       
       console.log(`🤖 Agent: ${agentReply}`);
       return agentReply;
