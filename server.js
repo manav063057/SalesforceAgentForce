@@ -245,31 +245,45 @@ async function handleAgentConversation(userMessage, sessionId, ws) {
       log("🟢 Deepgram TTS Stream obtained. sending chunks...");
 
       if (audioStream) {
-        log("🟢 Deepgram TTS Stream obtained. sending chunks with pacing...");
-        let chunkCount = 0;
+        log("🟢 Deepgram TTS Stream obtained. Sending granular 160-byte chunks...");
         let totalBytes = 0;
+        let isFirstChunk = true;
+        let leftover = Buffer.alloc(0);
         
         for await (const chunk of audioStream) {
+          let combined = Buffer.concat([leftover, chunk]);
           totalBytes += chunk.length;
-          
-          // Twilio expects raw Mu-law. If Deepgram sends a WAV header (44 bytes), skip it.
-          const payload = chunkCount === 0 && chunk.length > 44 && chunk.slice(0, 4) === Buffer.from("RIFF") 
-            ? chunk.slice(44).toString("base64") 
-            : chunk.toString("base64");
 
+          // Strip RIFF/WAV header (44 bytes) if present in the first chunk
+          if (isFirstChunk && combined.length >= 44 && combined.slice(0, 4).toString() === "RIFF") {
+            combined = combined.slice(44);
+            isFirstChunk = false;
+          }
+
+          let offset = 0;
+          while (offset + 160 <= combined.length) {
+            const packet = combined.slice(offset, offset + 160);
+            ws.send(JSON.stringify({
+              event: "media",
+              streamSid: ws.streamSid,
+              media: { payload: packet.toString("base64") }
+            }));
+            offset += 160;
+            // Standard Telephony Pacing: 20ms for every 160 bytes of 8kHz Mu-law
+            await new Promise(r => setTimeout(r, 20));
+          }
+          leftover = combined.slice(offset);
+        }
+
+        // Send remaining partial packet
+        if (leftover.length > 0) {
           ws.send(JSON.stringify({
             event: "media",
             streamSid: ws.streamSid,
-            media: {
-              payload: payload
-            }
+            media: { payload: leftover.toString("base64") }
           }));
-          
-          chunkCount++;
-          // Pacing: 20ms delay per chunk to match real-time playback (8000Hz Mulaw)
-          await new Promise(r => setTimeout(r, 20));
         }
-        log(`✅ [TTS] Sent ${chunkCount} audio chunks (${totalBytes} bytes) to customer`);
+        log(`✅ [TTS] Sent total ${totalBytes} bytes (granularly paced) to customer`);
       } else {
         log("❌ Deepgram returned empty audio stream");
       }
