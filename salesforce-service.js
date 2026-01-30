@@ -21,6 +21,13 @@ class SalesforceService {
     }
 
     try {
+      if (!this.instanceUrl) {
+          throw new Error("Missing SALESFORCE_INSTANCE_URL environment variable");
+      }
+      if (!this.clientId || !this.clientSecret) {
+          throw new Error("Missing Salesforce Client ID or Secret");
+      }
+
       const response = await axios.post(
         `${this.instanceUrl}/services/oauth2/token`,
         new URLSearchParams({
@@ -58,10 +65,12 @@ class SalesforceService {
       const url = `https://api.salesforce.com/einstein/ai-agent/v1/agents/${this.agentId}/sessions`;
       
       console.log("🔍 [DEBUG] Creating Session with:");
-      console.log("   - URL:", url);
-      console.log("   - Agent ID:", this.agentId);
-      console.log("   - Instance URL:", this.instanceUrl);
-      console.log("   - Token (first 20 chars):", token.substring(0, 20) + "...");
+      if (global.serverLog) {
+         global.serverLog(`🔍 [DEBUG] Creating Session with:`);
+         global.serverLog(`   - URL: ${url}`);
+         global.serverLog(`   - Agent ID: ${this.agentId}`);
+         global.serverLog(`   - Instance URL: ${this.instanceUrl}`);
+      }
 
       const response = await axios.post(
         url,

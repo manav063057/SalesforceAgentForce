@@ -29,6 +29,8 @@ const log = (msg) => {
   logs.push(entry);
   if (logs.length > 200) logs.shift();
 };
+// Expose log globally for salesforce-service.js (quick fix for observability)
+global.serverLog = log;
 
 /**
  * Diagnostic Endpoint: View recent logs
