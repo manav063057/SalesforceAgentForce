@@ -135,16 +135,15 @@ wss.on("connection", async (ws) => {
     });
   }
 
-  // Create Salesforce Agent session if configured
+  // Create Salesforce Agent session (Async - don't await)
   if (process.env.SALESFORCE_AGENT_ID) {
-    try {
-      log("🔄 Initializing Salesforce Agent session...");
-      const sessionData = await salesforceService.createSession();
-      salesforceSession = sessionData;
-      log(`✅ Salesforce session ready: ${salesforceSession.sessionId}`);
-    } catch (error) {
-      log(`❌ Could not create Salesforce session: ${error.message}`);
-    }
+    log("🔄 Initializing Salesforce Agent session (Background)...");
+    salesforceService.createSession().then(sessionData => {
+       salesforceSession = sessionData;
+       log(`✅ Salesforce session ready: ${salesforceSession.sessionId}`);
+    }).catch(error => {
+       log(`❌ Could not create Salesforce session: ${error.message}`);
+    });
   }
 
   ws.on("message", (message) => {
