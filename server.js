@@ -172,7 +172,6 @@ wss.on("connection", async (ws) => {
         case "stop":
           log("🛑 Stream Stopped");
           if (deepgramLive) deepgramLive.finish();
-          if (salesforceSession) salesforceService.endSession(salesforceSession.sessionId);
           break;
       }
     } catch (e) {
@@ -180,13 +179,19 @@ wss.on("connection", async (ws) => {
     }
   });
 
-  ws.on("close", () => {
+  ws.on("close", async () => {
     log("📴 WebSocket connection closed");
     if (deepgramLive) {
       deepgramLive.finish();
     }
     if (salesforceSession) {
-      salesforceService.endSession(salesforceSession.sessionId);
+      try {
+        const sid = salesforceSession.sessionId;
+        salesforceSession = null; // Prevent double-deletion
+        await salesforceService.endSession(sid);
+      } catch (err) {
+        log(`⚠️ Error during session cleanup: ${err.message}`);
+      }
     }
   });
 });
